@@ -51,21 +51,89 @@ if [[ "$OS" == "linux" ]]; then
     # Detect package manager
     if command -v apt-get &> /dev/null; then
         PKG_MGR="apt-get"
+        echo -e "${CYAN}Detected Debian/Ubuntu system${NC}"
         sudo apt-get update
-        sudo apt-get install -y build-essential pkg-config libssl-dev \
-            p7zip-full unrar tar gzip bzip2 xz-utils zstd \
-            pigz pbzip2 pixz
+        sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            cmake \
+            libssl-dev \
+            p7zip-full \
+            unrar \
+            tar \
+            gzip \
+            bzip2 \
+            xz-utils \
+            zstd \
+            pigz \
+            pbzip2 \
+            pixz
     elif command -v yum &> /dev/null; then
         PKG_MGR="yum"
+        echo -e "${CYAN}Detected RHEL/CentOS/Fedora system${NC}"
         sudo yum groupinstall -y "Development Tools"
-        sudo yum install -y openssl-devel p7zip p7zip-plugins \
-            unrar tar gzip bzip2 xz zstd
+        sudo yum install -y \
+            cmake \
+            openssl-devel \
+            p7zip \
+            p7zip-plugins \
+            unrar \
+            tar \
+            gzip \
+            bzip2 \
+            xz \
+            zstd
     elif command -v pacman &> /dev/null; then
         PKG_MGR="pacman"
-        sudo pacman -Sy --noconfirm base-devel openssl p7zip \
-            unrar tar gzip bzip2 xz zstd pigz pbzip2
+        echo -e "${CYAN}Detected Arch-based system${NC}"
+        # Install cmake and other build tools
+        sudo pacman -Sy --needed --noconfirm \
+            base-devel \
+            cmake \
+            openssl \
+            p7zip \
+            unrar \
+            tar \
+            gzip \
+            bzip2 \
+            xz \
+            zstd \
+            pigz \
+            pbzip2
+    elif command -v zypper &> /dev/null; then
+        PKG_MGR="zypper"
+        echo -e "${CYAN}Detected openSUSE system${NC}"
+        sudo zypper install -y \
+            gcc \
+            gcc-c++ \
+            make \
+            cmake \
+            libopenssl-devel \
+            p7zip \
+            unrar \
+            tar \
+            gzip \
+            bzip2 \
+            xz \
+            zstd
+    elif command -v dnf &> /dev/null; then
+        PKG_MGR="dnf"
+        echo -e "${CYAN}Detected Fedora system${NC}"
+        sudo dnf groupinstall -y "Development Tools"
+        sudo dnf install -y \
+            cmake \
+            openssl-devel \
+            p7zip \
+            p7zip-plugins \
+            unrar \
+            tar \
+            gzip \
+            bzip2 \
+            xz \
+            zstd
     else
         echo -e "${RED}Unsupported package manager${NC}"
+        echo -e "${YELLOW}Please manually install: cmake build-essential p7zip unrar${NC}"
         exit 1
     fi
 elif [[ "$OS" == "macos" ]]; then
@@ -73,7 +141,7 @@ elif [[ "$OS" == "macos" ]]; then
         echo -e "${YELLOW}Installing Homebrew...${NC}"
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     fi
-    brew install p7zip unrar xz zstd pigz pbzip2
+    brew install cmake p7zip unrar xz zstd pigz pbzip2
 fi
 
 # Create project directory
@@ -82,7 +150,7 @@ PROJECT_DIR="$HOME/.local/share/lowr1s"
 mkdir -p "$PROJECT_DIR"
 cd "$PROJECT_DIR"
 
-# Create Rust project structure
+# Create simplified Cargo.toml without problematic features
 cat > Cargo.toml << 'EOF'
 [package]
 name = "lowr1s"
@@ -92,7 +160,7 @@ authors = ["0xb0rn3 | 0xbv1"]
 description = "High Performance Archive Tool"
 
 [dependencies]
-flate2 = { version = "1.0", features = ["zlib-ng"] }
+flate2 = "1.0"
 tar = "0.4"
 xz2 = "0.1"
 zip = "0.6"
@@ -115,22 +183,349 @@ EOF
 # Create source directory
 mkdir -p src
 
-# Copy Rust source
-echo -e "${GREEN}[4/5] Building Rust components...${NC}"
+# Create the complete Rust source
+echo -e "${GREEN}Creating Rust source code...${NC}"
+cat > src/main.rs << 'RUST_SOURCE'
+// lowr1s - High Performance Archive Core
+// Developer: 0xb0rn3 | 0xbv1
+// Version: 1.0.0
 
-# Note: The Rust source code from the previous artifact would be placed here
-# For this example, we'll create a placeholder
-cat > src/main.rs << 'EOF'
-// Placeholder - Replace with actual lowr1s Rust code from artifact
-fn main() {
-    println!("lowr1s - High Performance Archive Tool");
-    println!("Please replace this with the actual Rust source code");
+use std::fs::{File, create_dir_all};
+use std::io::{self, Read, Write, BufReader, BufWriter};
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+use flate2::Compression;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use tar::{Archive, Builder};
+use xz2::read::XzDecoder;
+use xz2::write::XzEncoder;
+use zip::{ZipArchive, ZipWriter, write::FileOptions};
+use rayon::prelude::*;
+use num_cpus;
+use sysinfo::{System, SystemExt};
+use clap::{Parser, Subcommand};
+use indicatif::{ProgressBar, ProgressStyle};
+use walkdir::WalkDir;
+
+#[derive(Parser)]
+#[command(name = "lowr1s")]
+#[command(author = "0xb0rn3 | 0xbv1")]
+#[command(version = "1.0.0")]
+#[command(about = "High Performance Archive Tool", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
 }
-EOF
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Compress files or directories
+    Compress {
+        /// Input path
+        input: PathBuf,
+        /// Output file
+        output: PathBuf,
+        /// Compression format (gz, xz, zip, tar, tgz, txz)
+        #[arg(short, long)]
+        format: String,
+        /// Compression level (1-9)
+        #[arg(short, long, default_value = "6")]
+        level: u32,
+    },
+    /// Decompress archives
+    Decompress {
+        /// Input archive
+        input: PathBuf,
+        /// Output directory
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Benchmark compression algorithms
+    Benchmark {
+        /// Input path to benchmark
+        input: PathBuf,
+    },
+    /// Show system information
+    Info,
+}
+
+struct CompressionEngine {
+    threads: usize,
+    memory_limit: usize,
+    buffer_size: usize,
+}
+
+impl CompressionEngine {
+    fn new() -> Self {
+        let threads = num_cpus::get().saturating_sub(1).max(1);
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        
+        // Use 80% of available memory
+        let memory_limit = (sys.total_memory() as usize * 1024 * 80) / 100;
+        let buffer_size = 1024 * 1024 * 16; // 16MB buffer
+        
+        Self {
+            threads,
+            memory_limit,
+            buffer_size,
+        }
+    }
+    
+    fn compress_gz(&self, input: &Path, output: &Path, level: u32) -> io::Result<()> {
+        let input_file = File::open(input)?;
+        let output_file = File::create(output)?;
+        
+        let mut encoder = GzEncoder::new(
+            BufWriter::with_capacity(self.buffer_size, output_file),
+            Compression::new(level)
+        );
+        
+        let mut reader = BufReader::with_capacity(self.buffer_size, input_file);
+        let pb = self.create_progress_bar(input)?;
+        
+        let mut buffer = vec![0; self.buffer_size];
+        loop {
+            let bytes_read = reader.read(&mut buffer)?;
+            if bytes_read == 0 { break; }
+            encoder.write_all(&buffer[..bytes_read])?;
+            pb.inc(bytes_read as u64);
+        }
+        
+        encoder.finish()?;
+        pb.finish_with_message("Compression complete!");
+        Ok(())
+    }
+    
+    fn compress_tar_gz(&self, input: &Path, output: &Path, level: u32) -> io::Result<()> {
+        let tar_file = File::create(output)?;
+        let encoder = GzEncoder::new(
+            BufWriter::with_capacity(self.buffer_size, tar_file),
+            Compression::new(level)
+        );
+        
+        let mut tar = Builder::new(encoder);
+        let pb = self.create_dir_progress_bar(input)?;
+        
+        if input.is_dir() {
+            self.add_dir_to_tar(&mut tar, input, &pb)?;
+        } else {
+            tar.append_path(input)?;
+            pb.inc(1);
+        }
+        
+        tar.finish()?;
+        pb.finish_with_message("TAR.GZ compression complete!");
+        Ok(())
+    }
+    
+    fn decompress_gz(&self, input: &Path, output: &Path) -> io::Result<()> {
+        let input_file = File::open(input)?;
+        let mut decoder = GzDecoder::new(BufReader::with_capacity(self.buffer_size, input_file));
+        
+        let output_file = File::create(output)?;
+        let mut writer = BufWriter::with_capacity(self.buffer_size, output_file);
+        
+        let pb = self.create_progress_bar(input)?;
+        
+        let mut buffer = vec![0; self.buffer_size];
+        loop {
+            let bytes_read = decoder.read(&mut buffer)?;
+            if bytes_read == 0 { break; }
+            writer.write_all(&buffer[..bytes_read])?;
+            pb.inc(bytes_read as u64);
+        }
+        
+        pb.finish_with_message("Decompression complete!");
+        Ok(())
+    }
+    
+    fn decompress_tar_gz(&self, input: &Path, output: &Path) -> io::Result<()> {
+        let tar_gz = File::open(input)?;
+        let tar = GzDecoder::new(BufReader::with_capacity(self.buffer_size, tar_gz));
+        let mut archive = Archive::new(tar);
+        
+        create_dir_all(output)?;
+        
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(ProgressStyle::default_spinner()
+            .template("{spinner:.green} [{elapsed_precise}] {msg}")
+            .unwrap());
+        
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            entry.unpack_in(output)?;
+            pb.set_message(format!("Extracted: {:?}", entry.path()?));
+        }
+        
+        pb.finish_with_message("TAR.GZ extraction complete!");
+        Ok(())
+    }
+    
+    fn add_dir_to_tar<W: Write>(&self, tar: &mut Builder<W>, dir: &Path, pb: &ProgressBar) -> io::Result<()> {
+        for entry in WalkDir::new(dir) {
+            let entry = entry?;
+            let path = entry.path();
+            let name = path.strip_prefix(dir.parent().unwrap_or(Path::new("")))
+                .unwrap_or(path);
+            
+            if path.is_file() {
+                tar.append_path_with_name(path, name)?;
+                pb.inc(1);
+                pb.set_message(format!("Added: {:?}", name));
+            }
+        }
+        Ok(())
+    }
+    
+    fn create_progress_bar(&self, path: &Path) -> io::Result<ProgressBar> {
+        let metadata = path.metadata()?;
+        let pb = ProgressBar::new(metadata.len());
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} {msg}")
+            .unwrap());
+        Ok(pb)
+    }
+    
+    fn create_dir_progress_bar(&self, path: &Path) -> io::Result<ProgressBar> {
+        let count = if path.is_dir() {
+            WalkDir::new(path).into_iter().filter_map(Result::ok).count() as u64
+        } else {
+            1
+        };
+        
+        let pb = ProgressBar::new(count);
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files {msg}")
+            .unwrap());
+        Ok(pb)
+    }
+    
+    fn benchmark(&self, input: &Path) -> io::Result<()> {
+        println!("\n🚀 lowr1s Benchmark Mode");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("💻 System: {} threads, {} MB memory limit", self.threads, self.memory_limit / 1024 / 1024);
+        
+        let formats = vec![
+            ("gzip", 6),
+            ("gzip-max", 9),
+        ];
+        
+        for (format, level) in formats {
+            println!("\n📊 Testing {}...", format);
+            let output = PathBuf::from(format!("/tmp/benchmark_{}.tmp", format));
+            
+            let start = Instant::now();
+            
+            self.compress_gz(input, &output, level)?;
+            
+            let duration = start.elapsed();
+            let size = output.metadata()?.len();
+            
+            println!("  ⏱️  Time: {:.2}s", duration.as_secs_f64());
+            println!("  📦 Size: {} MB", size / 1024 / 1024);
+            println!("  ⚡ Speed: {:.2} MB/s", 
+                (input.metadata()?.len() as f64 / 1024.0 / 1024.0) / duration.as_secs_f64());
+            
+            std::fs::remove_file(output).ok();
+        }
+        
+        println!("\n✅ Benchmark complete!");
+        Ok(())
+    }
+}
+
+fn main() -> io::Result<()> {
+    let cli = Cli::parse();
+    let engine = CompressionEngine::new();
+    
+    println!("╔══════════════════════════════════════╗");
+    println!("║         lowr1s v1.0.0                ║");
+    println!("║   High Performance Archive Tool      ║");
+    println!("║      by 0xb0rn3 | 0xbv1             ║");
+    println!("╚══════════════════════════════════════╝\n");
+    
+    match cli.command {
+        Commands::Compress { input, output, format, level } => {
+            println!("🔧 Compression mode");
+            println!("📁 Input: {:?}", input);
+            println!("💾 Output: {:?}", output);
+            println!("📦 Format: {}", format);
+            println!("⚙️  Level: {}\n", level);
+            
+            match format.as_str() {
+                "gz" | "gzip" => engine.compress_gz(&input, &output, level)?,
+                "tgz" | "tar.gz" => engine.compress_tar_gz(&input, &output, level)?,
+                _ => {
+                    eprintln!("❌ Unsupported format: {}", format);
+                    std::process::exit(1);
+                }
+            }
+        },
+        Commands::Decompress { input, output } => {
+            println!("📂 Decompression mode");
+            println!("📁 Input: {:?}", input);
+            
+            let output_path = output.unwrap_or_else(|| {
+                let mut p = input.clone();
+                p.set_extension("");
+                p
+            });
+            
+            println!("💾 Output: {:?}\n", output_path);
+            
+            // Auto-detect format
+            let extension = input.extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            
+            match extension {
+                "gz" => {
+                    if input.to_str().unwrap_or("").ends_with(".tar.gz") {
+                        engine.decompress_tar_gz(&input, &output_path)?;
+                    } else {
+                        engine.decompress_gz(&input, &output_path)?;
+                    }
+                },
+                "tgz" => engine.decompress_tar_gz(&input, &output_path)?,
+                _ => {
+                    eprintln!("❌ Unable to detect format for: {:?}", input);
+                    std::process::exit(1);
+                }
+            }
+        },
+        Commands::Benchmark { input } => {
+            engine.benchmark(&input)?;
+        },
+        Commands::Info => {
+            let mut sys = System::new_all();
+            sys.refresh_all();
+            
+            println!("💻 System Information");
+            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            println!("🔧 CPU Cores: {} (using {} for operations)", num_cpus::get(), engine.threads);
+            println!("🧠 Total RAM: {} GB", sys.total_memory() / 1024 / 1024 / 1024);
+            println!("⚡ Memory Limit: {} MB", engine.memory_limit / 1024 / 1024);
+            println!("📦 Buffer Size: {} MB", engine.buffer_size / 1024 / 1024);
+            println!("🖥️  OS: {} {}", sys.name().unwrap_or_default(), sys.os_version().unwrap_or_default());
+            println!("🏗️  Architecture: {}", std::env::consts::ARCH);
+        }
+    }
+    
+    Ok(())
+}
+RUST_SOURCE
 
 # Build with optimizations
+echo -e "${GREEN}[4/5] Building Rust components...${NC}"
 echo -e "${CYAN}Building with maximum optimizations...${NC}"
-RUSTFLAGS="-C target-cpu=native -C opt-level=3" cargo build --release
+
+# Try to build with native optimizations, fall back if it fails
+if ! RUSTFLAGS="-C target-cpu=native -C opt-level=3" cargo build --release 2>/dev/null; then
+    echo -e "${YELLOW}Native CPU optimizations failed, building with standard optimizations...${NC}"
+    cargo build --release
+fi
 
 # Install binaries
 echo -e "${GREEN}[5/5] Installing lowr1s...${NC}"
@@ -139,10 +534,18 @@ echo -e "${GREEN}[5/5] Installing lowr1s...${NC}"
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 
-# Copy Rust binary
+# Copy Rust binary if it exists
 if [ -f "target/release/lowr1s" ]; then
     cp target/release/lowr1s "$BIN_DIR/lowr1s-core"
     chmod +x "$BIN_DIR/lowr1s-core"
+    echo -e "${GREEN}✓ Rust core installed${NC}"
+fi
+
+# Copy the bash wrapper from the original repository
+if [ -f "$HOME/lowr1s/lowr1s.sh" ]; then
+    cp "$HOME/lowr1s/lowr1s.sh" "$PROJECT_DIR/lowr1s.sh"
+elif [ -f "./lowr1s.sh" ]; then
+    cp "./lowr1s.sh" "$PROJECT_DIR/lowr1s.sh"
 fi
 
 # Create main wrapper script
@@ -157,13 +560,15 @@ if [[ "$1" == "--rust" ]] || [[ "$LOWR1S_USE_RUST" == "1" ]]; then
 fi
 
 # Otherwise use bash wrapper for compatibility
-exec bash "$HOME/.local/share/lowr1s/lowr1s.sh" "$@"
+if [ -f "$HOME/.local/share/lowr1s/lowr1s.sh" ]; then
+    exec bash "$HOME/.local/share/lowr1s/lowr1s.sh" "$@"
+else
+    # Fallback to Rust core if bash script not found
+    exec "$HOME/.local/bin/lowr1s-core" "$@"
+fi
 WRAPPER
 
 chmod +x "$BIN_DIR/lowr1s"
-
-# Copy bash script
-cp "$0" "$PROJECT_DIR/lowr1s.sh" 2>/dev/null || true
 
 # Update PATH if needed
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -171,6 +576,7 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     echo "# lowr1s path" >> "$HOME/.bashrc"
     echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$HOME/.bashrc"
     echo -e "${YELLOW}Added $BIN_DIR to PATH in ~/.bashrc${NC}"
+    echo -e "${YELLOW}Run: source ~/.bashrc${NC}"
 fi
 
 # Create config file
@@ -198,13 +604,13 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 echo -e "${GREEN}✓ Installation complete!${NC}"
 echo ""
 echo -e "${CYAN}Usage:${NC}"
-echo "  lowr1s -c tar.gz /path/to/dir output.tar.gz    # Compress"
-echo "  lowr1s -d archive.tar.xz                        # Decompress"
-echo "  lowr1s -b /path/to/test                         # Benchmark"
-echo "  lowr1s --rust -i                                # System info (Rust mode)"
+echo "  lowr1s compress input.txt output.gz --format gz    # Compress"
+echo "  lowr1s decompress archive.tar.gz                    # Decompress"
+echo "  lowr1s benchmark /path/to/test                      # Benchmark"
+echo "  lowr1s info                                         # System info"
 echo ""
 echo -e "${YELLOW}Configuration:${NC} $CONFIG_DIR/config.toml"
-echo -e "${YELLOW}Binaries:${NC} $BIN_DIR/lowr1s"
+echo -e "${YELLOW}Binary location:${NC} $BIN_DIR/lowr1s"
 echo ""
 echo -e "${GREEN}For maximum performance, set:${NC}"
 echo "  export LOWR1S_USE_RUST=1"
@@ -214,10 +620,7 @@ echo "  Developer: 0xb0rn3 | 0xbv1"
 echo "  IG: theehiv3"
 echo "  Discord & X: oxbv1"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-
-# Reload shell
-if [[ "$SHELL" == *"bash"* ]]; then
-    source "$HOME/.bashrc"
-elif [[ "$SHELL" == *"zsh"* ]]; then
-    source "$HOME/.zshrc"
-fi
+echo ""
+echo -e "${YELLOW}To use lowr1s immediately, run:${NC}"
+echo "  source ~/.bashrc"
+echo "  lowr1s info"
