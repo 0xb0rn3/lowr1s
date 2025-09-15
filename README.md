@@ -6,7 +6,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Rust](https://img.shields.io/badge/rust-%E2%89%A5%201.70-orange.svg)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey.svg)
-[![Performance](https://img.shields.io/badge/performance-extreme-red.svg)](https://github.com/lowr1s)
+[![Performance](https://img.shields.io/badge/performance-extreme-red.svg)](https://github.com/0xb0rn3/lowr1s)
 
 **High-Performance Archive Tool with Hardware Acceleration**
 
@@ -66,13 +66,20 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/lowr1s/lowr1s.git
+git clone https://github.com/0xb0rn3/lowr1s.git
 cd lowr1s
 
-# Run installer
-chmod +x install.sh
-./install.sh
+# Make executable and run
+chmod +x run
+./run
 ```
+
+The `run` script will automatically:
+- Check for dependencies
+- Install missing packages
+- Build the Rust components with optimizations
+- Set up your environment
+- Configure PATH variables
 
 ### Manual Installation
 
@@ -281,6 +288,10 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 git clone https://github.com/YOUR_USERNAME/lowr1s.git
 cd lowr1s
 
+# Run setup
+chmod +x run
+./run
+
 # Create branch
 git checkout -b feature/amazing-feature
 
@@ -337,7 +348,7 @@ For security vulnerabilities, please email security[at]lowr1s.dev instead of usi
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=lowr1s/lowr1s&type=Date)](https://star-history.com/#lowr1s/lowr1s&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=0xb0rn3/lowr1s&type=Date)](https://star-history.com/#0xb0rn3/lowr1s&Date)
 
 ---
 
